@@ -35,10 +35,10 @@ def is_csv_wavs_format(input_dataset_dir):
 
 
 # Configuration constants
-BATCH_SIZE = 100  # Batch size for text conversion
+BATCH_SIZE = 1000  # Batch size for text conversion
 MAX_WORKERS = max(1, multiprocessing.cpu_count() - 1)  # Leave one CPU free
 THREAD_NAME_PREFIX = "AudioProcessor"
-CHUNK_SIZE = 100  # Number of files to process per worker batch
+CHUNK_SIZE = 1000  # Number of files to process per worker batch
 
 executor = None  # Global executor for cleanup
 
@@ -190,7 +190,7 @@ def get_audio_duration(audio_path, timeout=5):
 def read_audio_text_pairs(csv_file_path):
     audio_text_pairs = []
 
-    parent = Path(csv_file_path).parent
+ 
     with open(csv_file_path, mode="r", newline="", encoding="utf-8-sig") as csvfile:
         reader = csv.reader(csvfile, delimiter="|")
         next(reader)  # Skip the header row
@@ -198,7 +198,9 @@ def read_audio_text_pairs(csv_file_path):
             if len(row) >= 2:
                 audio_file = row[0].strip()  # First column: audio file path
                 text = row[1].strip()  # Second column: text
-                audio_file_path = parent / audio_file
+                audio_file_path = Path(audio_file)
+                if not audio_file_path.is_absolute():
+                    audio_file_path = Path(csv_file_path).parent / audio_file_path
                 audio_text_pairs.append((audio_file_path.as_posix(), text))
 
     return audio_text_pairs

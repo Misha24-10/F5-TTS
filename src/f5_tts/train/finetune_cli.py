@@ -71,6 +71,12 @@ def parse_args():
         action="store_true",
         help="Use 8-bit Adam optimizer from bitsandbytes",
     )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=2,
+        help="num_workers for dataloader",
+    )
 
     return parser.parse_args()
 
@@ -206,6 +212,7 @@ def main():
 
     trainer.train(
         train_dataset,
+        num_workers=args.num_workers,
         resumable_with_seed=666,  # seed for shuffling dataset
     )
 

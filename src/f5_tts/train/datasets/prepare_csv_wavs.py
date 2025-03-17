@@ -65,8 +65,8 @@ def graceful_exit():
             executor.shutdown(wait=False)
 
 
-def process_audio_file(audio_path, text, polyphone):
-    """Process a single audio file by checking its existence and extracting duration."""
+def process_audio_file(audio_path, text, polyphone, min_duration=0, max_duration=None):
+    """Process a single audio file by checking its existence, extracting duration and filtering by duration."""
     if not Path(audio_path).exists():
         print(f"audio {audio_path} not found, skipping")
         return None
@@ -74,6 +74,12 @@ def process_audio_file(audio_path, text, polyphone):
         audio_duration = get_audio_duration(audio_path)
         if audio_duration <= 0:
             raise ValueError(f"Duration {audio_duration} is non-positive.")
+        if audio_duration < min_duration:
+            print(f"Skipping file {audio_path} with duration {audio_duration:.2f}s below minimum threshold {min_duration}s")
+            return None
+        if max_duration is not None and audio_duration > max_duration:
+            print(f"Skipping file {audio_path} with duration {audio_duration:.2f}s above maximum threshold {max_duration}s")
+            return None
         return (audio_path, text, audio_duration)
     except Exception as e:
         print(f"Warning: Failed to process {audio_path} due to error: {e}. Skipping corrupt file.")
@@ -90,7 +96,7 @@ def batch_convert_texts(texts, polyphone, batch_size=BATCH_SIZE):
     return converted_texts
 
 
-def prepare_csv_wavs_dir(input_dir, num_workers=None):
+def prepare_csv_wavs_dir(input_dir, num_workers=None, min_duration=0, max_duration=None):
     global executor
     assert is_csv_wavs_format(input_dir), f"not csv_wavs format: {input_dir}"
     input_dir = Path(input_dir)
@@ -115,8 +121,11 @@ def prepare_csv_wavs_dir(input_dir, num_workers=None):
             # Process files in chunks for better efficiency
             for i in range(0, len(audio_path_text_pairs), CHUNK_SIZE):
                 chunk = audio_path_text_pairs[i : i + CHUNK_SIZE]
-                # Submit futures in order
-                chunk_futures = [executor.submit(process_audio_file, pair[0], pair[1], polyphone) for pair in chunk]
+                # Submit futures with duration filtering parameters
+                chunk_futures = [
+                    executor.submit(process_audio_file, pair[0], pair[1], polyphone, min_duration, max_duration)
+                    for pair in chunk
+                ]
 
                 # Iterate over futures in the original submission order to preserve ordering
                 for future in tqdm(
@@ -190,7 +199,6 @@ def get_audio_duration(audio_path, timeout=5):
 def read_audio_text_pairs(csv_file_path):
     audio_text_pairs = []
 
- 
     with open(csv_file_path, mode="r", newline="", encoding="utf-8-sig") as csvfile:
         reader = csv.reader(csvfile, delimiter="|")
         next(reader)  # Skip the header row
@@ -238,10 +246,12 @@ def save_prepped_dataset(out_dir, result, duration_list, text_vocab_set, is_fine
     print(f"For {dataset_name}, total {sum(duration_list)/3600:.2f} hours")
 
 
-def prepare_and_save_set(inp_dir, out_dir, is_finetune: bool = True, num_workers: int = None):
+def prepare_and_save_set(inp_dir, out_dir, is_finetune: bool = True, num_workers: int = None,
+                         min_duration=0, max_duration=None):
     if is_finetune:
         assert PRETRAINED_VOCAB_PATH.exists(), f"pretrained vocab.txt not found: {PRETRAINED_VOCAB_PATH}"
-    sub_result, durations, vocab_set = prepare_csv_wavs_dir(inp_dir, num_workers=num_workers)
+    sub_result, durations, vocab_set = prepare_csv_wavs_dir(inp_dir, num_workers=num_workers,
+                                                            min_duration=min_duration, max_duration=max_duration)
     save_prepped_dataset(out_dir, sub_result, durations, vocab_set, is_finetune)
 
 
@@ -264,17 +274,22 @@ Examples:
     # For pre-training:
     python prepare_csv_wavs.py /input/dataset/path /output/dataset/path --pretrain
     
-    # With custom worker count:
-    python prepare_csv_wavs.py /input/dataset/path /output/dataset/path --workers 4
+    # With custom worker count and duration filtering:
+    python prepare_csv_wavs.py /input/dataset/path /output/dataset/path --workers 4 --min_duration 1.5 --max_duration 10
             """,
         )
         parser.add_argument("inp_dir", type=str, help="Input directory containing the data.")
         parser.add_argument("out_dir", type=str, help="Output directory to save the prepared data.")
         parser.add_argument("--pretrain", action="store_true", help="Enable for new pretrain, otherwise is a fine-tune")
         parser.add_argument("--workers", type=int, help=f"Number of worker threads (default: {MAX_WORKERS})")
+        parser.add_argument("--min_duration", type=float, default=1.0,
+                            help="Minimum audio duration in seconds (default: 0).")
+        parser.add_argument("--max_duration", type=float, default=25.0,
+                            help="Maximum audio duration in seconds (default: no limit).")
         args = parser.parse_args()
 
-        prepare_and_save_set(args.inp_dir, args.out_dir, is_finetune=not args.pretrain, num_workers=args.workers)
+        prepare_and_save_set(args.inp_dir, args.out_dir, is_finetune=not args.pretrain,
+                             num_workers=args.workers, min_duration=args.min_duration, max_duration=args.max_duration)
     except KeyboardInterrupt:
         print("\nOperation cancelled by user. Cleaning up...")
         if executor is not None:

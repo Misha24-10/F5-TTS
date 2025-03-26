@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torchaudio
 import tqdm
-from huggingface_hub import snapshot_download, hf_hub_download
+from huggingface_hub import hf_hub_download
 from pydub import AudioSegment, silence
 from transformers import pipeline
 from vocos import Vocos
@@ -128,11 +128,12 @@ def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=dev
         except ImportError:
             print("You need to follow the README to init submodule and change the BigVGAN source code.")
         if is_local:
-            """download from https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x/tree/main"""
+            # download generator from https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x/tree/main
             vocoder = bigvgan.BigVGAN.from_pretrained(local_path, use_cuda_kernel=False)
         else:
-            local_path = snapshot_download(repo_id="nvidia/bigvgan_v2_24khz_100band_256x", cache_dir=hf_cache_dir)
-            vocoder = bigvgan.BigVGAN.from_pretrained(local_path, use_cuda_kernel=False)
+            vocoder = bigvgan.BigVGAN.from_pretrained(
+                "nvidia/bigvgan_v2_24khz_100band_256x", use_cuda_kernel=False, cache_dir=hf_cache_dir
+            )
 
         vocoder.remove_weight_norm()
         vocoder = vocoder.eval().to(device)
@@ -149,7 +150,7 @@ def initialize_asr_pipeline(device: str = device, dtype=None):
         dtype = (
             torch.float16
             if "cuda" in device
-            and torch.cuda.get_device_properties(device).major >= 6
+            and torch.cuda.get_device_properties(device).major >= 7
             and not torch.cuda.get_device_name().endswith("[ZLUDA]")
             else torch.float32
         )
@@ -186,7 +187,7 @@ def load_checkpoint(model, ckpt_path, device: str, dtype=None, use_ema=True):
         dtype = (
             torch.float16
             if "cuda" in device
-            and torch.cuda.get_device_properties(device).major >= 6
+            and torch.cuda.get_device_properties(device).major >= 7
             and not torch.cuda.get_device_name().endswith("[ZLUDA]")
             else torch.float32
         )
@@ -289,7 +290,7 @@ def remove_silence_edges(audio, silence_threshold=-42):
 # preprocess reference audio and text
 
 
-def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_info=print, device=device):
+def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_info=print):
     show_info("Converting audio...")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
         aseg = AudioSegment.from_file(ref_audio_orig)
@@ -302,7 +303,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
             non_silent_wave = AudioSegment.silent(duration=0)
             for non_silent_seg in non_silent_segs:
                 if len(non_silent_wave) > 6000 and len(non_silent_wave + non_silent_seg) > 12000:
-                    show_info("Audio is over 15s, clipping short. (1)")
+                    show_info("Audio is over 12s, clipping short. (1)")
                     break
                 non_silent_wave += non_silent_seg
 
@@ -314,7 +315,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
                 non_silent_wave = AudioSegment.silent(duration=0)
                 for non_silent_seg in non_silent_segs:
                     if len(non_silent_wave) > 6000 and len(non_silent_wave + non_silent_seg) > 12000:
-                        show_info("Audio is over 15s, clipping short. (2)")
+                        show_info("Audio is over 12s, clipping short. (2)")
                         break
                     non_silent_wave += non_silent_seg
 
@@ -323,7 +324,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
             # 3. if no proper silence found for clipping
             if len(aseg) > 12000:
                 aseg = aseg[:12000]
-                show_info("Audio is over 15s, clipping short. (3)")
+                show_info("Audio is over 12s, clipping short. (3)")
 
         aseg = remove_silence_edges(aseg) + AudioSegment.silent(duration=50)
         aseg.export(f.name, format="wav")
